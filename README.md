@@ -12,6 +12,8 @@ The usage of C++11 enforce the usage of recent compilers (g++4.8, clang3.0, cl18
 
 Linux
 =====
+
+[![Join the chat at https://gitter.im/NicolasLutz/CGoGN](https://badges.gitter.im/NicolasLutz/CGoGN.svg)](https://gitter.im/NicolasLutz/CGoGN?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 Dependencies
 ------------
 * install for following package cmake cmake-curses-gui cmake-qt-gui libXi-dev libXmu-dev libglew-dev zlib1g-dev uuid-dev libgsl0-dev libsuitesparse-dev python2.7-dev
