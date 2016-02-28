@@ -17,6 +17,11 @@
 #include <QFileDialog>
 #include <QFileInfo>
 
+#define IN_DEV
+#ifdef IN_DEV
+#include <fstream>
+#endif
+
 namespace CGoGN
 {
 
@@ -387,7 +392,7 @@ MapHandlerGen* Surface_Radiance_Plugin::importFromFile_SH(const QString& fileNam
 			registerShader(mapParams.radiancePerVertexShader);
 		}
 
-		this->pythonRecording("importFile", mhg->getName(), fi.baseName());
+        this->pythonRecording("importFromFile_SH", mhg->getName(), fi.baseName());
 
 		return mhg;
 	}
@@ -471,7 +476,7 @@ MapHandlerGen* Surface_Radiance_Plugin::importFromFile_P(const QString& fileName
 			registerShader(mapParams.radiancePerVertexPShader);
 		}
 
-		this->pythonRecording("importFile", mhg->getName(), fi.baseName());
+        this->pythonRecording("importFromFile_P", mhg->getName(), fi.baseName());
 
 		return mhg;
 	}
@@ -624,6 +629,13 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 	const QString& normalAttributeName2,
 	const QString& distanceAttributeName2)
 {
+#ifdef IN_DEV
+    std::ofstream ofs;
+    ofs.open ("radianceDistance.log", std::ostream::app);
+#else
+    std::ostream& ofs=std::cout;
+#endif
+
 	MapHandler<PFP2>* mh1 = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName1));
 	if(mh1 == NULL)
 		return;
@@ -686,13 +698,14 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 		PFP2::REAL minDist2 = std::numeric_limits<PFP2::REAL>::max();
 		Face closestFace;
 
-		for (Face f : allFacesOf(*map2))
+        allCells<CGoGN::EmbeddedMap2, FACE>::iterator itEnd=allFacesOf(*map2).end();
+        for (allCells<CGoGN::EmbeddedMap2, FACE>::iterator it=allFacesOf(*map2).begin(); it!=itEnd && minDist2>0.0025; ++it)
 		{
-			PFP2::REAL dist = Algo::Geometry::squaredDistancePoint2Face<PFP2>(*map2, f, position2, P);
+            PFP2::REAL dist = Algo::Geometry::squaredDistancePoint2Face<PFP2>(*map2, (*it), position2, P);
 			if (dist < minDist2)
 			{
 				minDist2 = dist;
-				closestFace = f;
+                closestFace = (*it);
 			}
 		}
 
@@ -733,28 +746,68 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 	}
 	);
 
+    PFP2::REAL maxDistance = 0;
+    double sumDistance = 0;
+    double avgDistance = 0;
+    double wgtDistance = 0;
+    unsigned int itNumber = 0;
+    size_t errorsSize = errors.size();
+    bool highSum=false;
+
 	map2->setExternalThreadsAuthorization(false);
 
-	std::sort(errors.begin(), errors.end());
+    std::sort(errors.begin(), errors.end());
 	PFP2::REAL Q1 = errors[int(errors.size() / 4)];
 //	PFP2::REAL Q2 = errors[int(errors.size() / 2)];
 	PFP2::REAL Q3 = errors[int(errors.size() * 3 / 4)];
 	PFP2::REAL IQrange = Q3 - Q1;
 	PFP2::REAL lowerBound = Q1 - 1.5*IQrange;
-	PFP2::REAL upperBound = Q3 + 1.5*IQrange;
-	for (PFP2::REAL& dist : distance1.iterable())
-	{
-		if (dist < lowerBound) { dist = lowerBound; }
+    PFP2::REAL upperBound = Q3 + 1.5*IQrange;
+
+#ifdef IN_DEV
+        ofs << "Q1: " << Q1 << std::endl;
+        ofs << "Q3: " << Q3 << std::endl;
+        ofs << "IQrange: " << IQrange << std::endl;
+        ofs << "lower bound: " << lowerBound << std::endl;
+        ofs << "upper bound: " << upperBound << std::endl;
+#endif
+
+    for (PFP2::REAL& dist : distance1.iterable())
+    {
+        if (dist < lowerBound) { dist = lowerBound; }
 		if (dist > upperBound) { dist = upperBound; }
-	}
+        ++itNumber;
+
+#ifdef IN_DEV
+        ofs << dist << std::endl;
+#endif
+
+        sumDistance += dist;
+        if(sumDistance>std::numeric_limits<PFP2::REAL>::max()/2.0)
+            highSum=true;
+        wgtDistance += dist*((double)itNumber/errorsSize);
+    }
+
+    maxDistance = errors[errorsSize-1];                         //maximum distance shouldn't be normalized
+    avgDistance = itNumber > 0 ? sumDistance/itNumber : 0;
+    wgtDistance = wgtDistance / (((double)errorsSize+1)/2);     //sum of i/n is (n+1)/2
 
 	integrator.Release();
 
-	this->pythonRecording("computeRadianceDistance", "", mapName1, positionAttributeName1, distanceAttributeName1,
-							mapName2, positionAttributeName2, distanceAttributeName2);
+    this->pythonRecording("computeRadianceDistance", "", mapName1, positionAttributeName1, normalAttributeName1, distanceAttributeName1,
+                            mapName2, positionAttributeName2, normalAttributeName2, distanceAttributeName2);
 
 	mh1->notifyAttributeModification(distance1);
 	mh2->notifyAttributeModification(distance2);
+
+    ofs << "Max distance: " << maxDistance << std::endl;
+    ofs << "Sum distance: " << sumDistance << (highSum ? " (warning: might be too inaccurate)" : " ") << std::endl;
+    ofs << "Avg distance: " << avgDistance << std::endl;
+    ofs << "Wgt distance: " << wgtDistance << std::endl;
+
+#ifdef IN_DEV
+    ofs.close();
+#endif
 }
 
 void Surface_Radiance_Plugin::checkNbVerticesAndExport(Surface_Radiance_Plugin* p, const unsigned int* nbVertices)
