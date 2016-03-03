@@ -73,6 +73,8 @@ protected:
 	template <typename T1, typename T2, typename T3, typename T4, typename T5, typename T6>
 	inline void pythonRecording(QString slotName, QString returned, T1 param1, T2 param2, T3 param3, T4 param4, T5 param5, T6 param6);
 
+    template <typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7, typename T8>
+    inline void pythonRecording(QString slotName, QString returned, T1 param1, T2 param2, T3 param3, T4 param4, T5 param5, T6 param6, T7 param7, T8 param8);
 
 	template <typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7, typename T8, typename T9, typename T10, typename T11>
 	inline void pythonRecording(QString slotName, QString returned, T1 param1, T2 param2, T3 param3, T4 param4, T5 param5, T6 param6, T7 param7, T8 param8, T9 param9, T10 param10, T11 param11);
@@ -183,7 +185,6 @@ void Plugin::pythonRecording(QString slotName, QString returned, T1 param1, T2 p
 	}
 }
 
-
 template <typename T1, typename T2, typename T3, typename T4, typename T5, typename T6>
 void Plugin::pythonRecording(QString slotName, QString returned, T1 param1, T2 param2, T3 param3, T4 param4, T5 param5, T6 param6)
 {
@@ -196,11 +197,26 @@ void Plugin::pythonRecording(QString slotName, QString returned, T1 param1, T2 p
 			*rec << returned << " = ";
 		}
 		*rec << this->getName() << "." << slotName << "(" << pyR_stringify(param1) << ", " << pyR_stringify(param2) << ", ";
-		*rec << pyR_stringify(param3) << ", " << pyR_stringify(param4) << ", " << pyR_stringify(param5) << ", " << pyR_stringify(param6)  << ");" << endl;
+        *rec << pyR_stringify(param3) << ", " << pyR_stringify(param4) << ", " << pyR_stringify(param5) << ", " << pyR_stringify(param6)  << ");" << endl;
 	}
 }
 
-
+template <typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7, typename T8>
+void Plugin::pythonRecording(QString slotName, QString returned, T1 param1, T2 param2, T3 param3, T4 param4, T5 param5, T6 param6, T7 param7, T8 param8)
+{
+    QTextStream* rec = m_schnapps->pythonStreamRecorder();
+    if (rec)
+    {
+        if (!returned.isEmpty())
+        {
+            m_schnapps->pythonVarDeclare(returned);
+            *rec << returned << " = ";
+        }
+        *rec << this->getName() << "." << slotName << "(" << pyR_stringify(param1) << ", " << pyR_stringify(param2) << ", ";
+        *rec << pyR_stringify(param3) << ", " << pyR_stringify(param4) << ", " << pyR_stringify(param5) << ", ";
+        *rec << pyR_stringify(param6) << ", " << pyR_stringify(param7) << ", " << pyR_stringify(param8) << ");" << endl;
+    }
+}
 
 template <typename T1, typename T2, typename T3, typename T4, typename T5, typename T6, typename T7, typename T8, typename T9, typename T10, typename T11>
 void Plugin::pythonRecording(QString slotName, QString returned, T1 param1, T2 param2, T3 param3, T4 param4, T5 param5, T6 param6, T7 param7, T8 param8, T9 param9, T10 param10, T11 param11)
