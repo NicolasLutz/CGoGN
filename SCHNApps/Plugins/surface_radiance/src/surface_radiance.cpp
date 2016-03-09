@@ -683,7 +683,8 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
 	// for each vertex of map1
 
-	std::vector<PFP2::REAL> errors;
+    std::vector<std::pair<PFP2::REAL, PFP2::REAL> > errors;
+    PFP2::REAL maxFaceArea=0;
 	errors.reserve(100000);
 
 	map2->setExternalThreadsAuthorization(true);
@@ -699,7 +700,7 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 		Face closestFace;
 
         allCells<CGoGN::EmbeddedMap2, FACE>::iterator itEnd=allFacesOf(*map2).end();
-        for (allCells<CGoGN::EmbeddedMap2, FACE>::iterator it=allFacesOf(*map2).begin(); it!=itEnd && minDist2>0.0025; ++it)
+        for (allCells<CGoGN::EmbeddedMap2, FACE>::iterator it=allFacesOf(*map2).begin(); it!=itEnd && minDist2>0; ++it)
 		{
             PFP2::REAL dist = Algo::Geometry::squaredDistancePoint2Face<PFP2>(*map2, (*it), position2, P);
 			if (dist < minDist2)
@@ -738,59 +739,67 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 		double area;
 		integrator.Compute(&integral, &area, SHEvalCartesian_Error, &diffRad, isInHemisphere, N.data());
 
-		PFP2::REAL radError = integral / area;
+        PFP2::REAL radError = integral / area;
 
 		distance1[v] = radError;
 
-		errors.push_back(radError);
+        PFP2::REAL faceArea = Algo::Surface::Geometry::triangleArea<PFP2>((*map2), closestFace, position2);
+        maxFaceArea = std::max(maxFaceArea, faceArea);
+
+        errors.push_back(std::make_pair(radError, faceArea));
 	}
 	);
-
-    PFP2::REAL maxDistance = 0;
-    double sumDistance = 0;
-    double avgDistance = 0;
-    double wgtDistance = 0;
-    unsigned int itNumber = 0;
-    size_t errorsSize = errors.size();
-    bool highSum=false;
 
 	map2->setExternalThreadsAuthorization(false);
 
     std::sort(errors.begin(), errors.end());
-	PFP2::REAL Q1 = errors[int(errors.size() / 4)];
+    PFP2::REAL Q1 = errors[int(errors.size() / 4)].first;
 //	PFP2::REAL Q2 = errors[int(errors.size() / 2)];
-	PFP2::REAL Q3 = errors[int(errors.size() * 3 / 4)];
+    PFP2::REAL Q3 = errors[int(errors.size() * 3 / 4)].first;
 	PFP2::REAL IQrange = Q3 - Q1;
 	PFP2::REAL lowerBound = Q1 - 1.5*IQrange;
     PFP2::REAL upperBound = Q3 + 1.5*IQrange;
 
-#ifdef IN_DEV
-        ofs << "Q1: " << Q1 << std::endl;
-        ofs << "Q3: " << Q3 << std::endl;
-        ofs << "IQrange: " << IQrange << std::endl;
-        ofs << "lower bound: " << lowerBound << std::endl;
-        ofs << "upper bound: " << upperBound << std::endl;
-#endif
+    double maxDistance = 0;
+    double sumDistance = 0;
+    double avgDistance = 0;
+    double uniformWgtDistance = 0;
+    double areaWgtDistance = 0;
+
+    double totalAreaWeights=0;
+    unsigned int lastValidIndex=0;
+    unsigned int iterationsNumber = 0;
+    size_t validErrorsNumber = errors.size();
 
     for (PFP2::REAL& dist : distance1.iterable())
     {
+        if(std::isnan(dist))
+            validErrorsNumber--;
         if (dist < lowerBound) { dist = lowerBound; }
-		if (dist > upperBound) { dist = upperBound; }
-        ++itNumber;
-
-#ifdef IN_DEV
-        ofs << dist << std::endl;
-#endif
-
-        sumDistance += dist;
-        if(sumDistance>std::numeric_limits<PFP2::REAL>::max()/2.0)
-            highSum=true;
-        wgtDistance += dist*((double)itNumber/errorsSize);
+        if (dist > upperBound) { dist = upperBound; }
     }
 
-    maxDistance = errors[errorsSize-1];                         //maximum distance shouldn't be normalized
-    avgDistance = itNumber > 0 ? sumDistance/itNumber : 0;
-    wgtDistance = wgtDistance / (((double)errorsSize+1)/2);     //sum of i/n is (n+1)/2
+    for(unsigned int i=0; i<errors.size(); ++i)
+    {
+        if(!std::isnan(errors[i].first))
+        {
+            ++iterationsNumber;
+            lastValidIndex=i;
+
+            sumDistance += errors[i].first;
+
+            uniformWgtDistance += errors[i].first*((double)iterationsNumber/validErrorsNumber);
+
+            double localAreaDivByMaxArea = (double)errors[i].second/maxFaceArea;
+            totalAreaWeights += localAreaDivByMaxArea;
+            areaWgtDistance += errors[i].first*localAreaDivByMaxArea;
+        }
+    }
+
+    maxDistance = errors[lastValidIndex].first;
+    avgDistance = iterationsNumber > 0 ? sumDistance/iterationsNumber : 0;
+    uniformWgtDistance = uniformWgtDistance / (((double)validErrorsNumber+1)/2);     //sum of i/n is (n+1)/2
+    areaWgtDistance = areaWgtDistance / totalAreaWeights;
 
 	integrator.Release();
 
@@ -800,10 +809,13 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 	mh1->notifyAttributeModification(distance1);
 	mh2->notifyAttributeModification(distance2);
 
+    ofs << "Comparing " << mapName1.toStdString() << " and " << mapName2.toStdString() << std::endl;
     ofs << "Max distance: " << maxDistance << std::endl;
-    ofs << "Sum distance: " << sumDistance << (highSum ? " (warning: might be too inaccurate)" : " ") << std::endl;
+    ofs << "Sum distance: " << sumDistance << std::endl;
     ofs << "Avg distance: " << avgDistance << std::endl;
-    ofs << "Wgt distance: " << wgtDistance << std::endl;
+    ofs << "Wgt distance (by local error value): " << uniformWgtDistance << std::endl;
+    ofs << "Wgt distance (by local face's area value): " << areaWgtDistance << std::endl;
+    ofs << "=======================================================" << std::endl;
 
 #ifdef IN_DEV
     ofs.close();
