@@ -631,7 +631,7 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 {
 #ifdef IN_DEV
     std::ofstream ofs;
-    ofs.open ("radianceDistance.log", std::ostream::app);
+    ofs.open ("../../../../../Dropbox/St/radianceDistance.log", std::ostream::app);
 #else
     std::ostream& ofs=std::cout;
 #endif
@@ -685,7 +685,7 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
     std::vector<std::pair<PFP2::REAL, PFP2::REAL> > errors;
     PFP2::REAL maxFaceArea=0;
-	errors.reserve(100000);
+    errors.reserve(map1->getNbCells(VERTEX));
 
 	map2->setExternalThreadsAuthorization(true);
 
@@ -699,16 +699,15 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 		PFP2::REAL minDist2 = std::numeric_limits<PFP2::REAL>::max();
 		Face closestFace;
 
-        allCells<CGoGN::EmbeddedMap2, FACE>::iterator itEnd=allFacesOf(*map2).end();
-        for (allCells<CGoGN::EmbeddedMap2, FACE>::iterator it=allFacesOf(*map2).begin(); it!=itEnd && minDist2>0; ++it)
-		{
-            PFP2::REAL dist = Algo::Geometry::squaredDistancePoint2Face<PFP2>(*map2, (*it), position2, P);
-			if (dist < minDist2)
-			{
-				minDist2 = dist;
-                closestFace = (*it);
-			}
-		}
+        for (Face f : allFacesOf(*map2))
+        {
+            PFP2::REAL dist = Algo::Geometry::squaredDistancePoint2Face<PFP2>(*map2, f, position2, P);
+            if (dist < minDist2)
+            {
+                minDist2 = dist;
+                closestFace = f;
+            }
+        }
 
 //		PFP2::REAL minDist = sqrt(minDist2);
 
