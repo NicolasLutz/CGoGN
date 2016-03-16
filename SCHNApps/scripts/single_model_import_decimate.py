@@ -19,3 +19,6 @@ Mask1_decim005_degree2_lambda005.createVBO("radiance");
 Surface_Radiance.changePositionVBO(Mask1_decim005_degree2_lambda005.getName(), "position");
 Surface_Radiance.changeNormalVBO(Mask1_decim005_degree2_lambda005.getName(), "normal");
 Surface_Radiance.decimate(Mask1_decim005_degree2_lambda005.getName(), "position", "normal", 0.125, 1); #replace 0.125 by the percentage of decimation you want
+
+#export the model
+Surface_Radiance.exportPLY(Mask1_decim005_degree2_lambda005.getName(), "position", "normal", "exportedModel.ply");
