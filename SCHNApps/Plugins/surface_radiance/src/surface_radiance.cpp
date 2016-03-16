@@ -689,7 +689,7 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
 	map2->setExternalThreadsAuthorization(true);
 
-    Parallel::foreach_cell<VERTEX>(*map1, [&] (Vertex v, unsigned int threadIndex)
+    foreach_cell<VERTEX>(*map1, [&] (Vertex v)
     {
 		const PFP2::VEC3& P = position1[v];
 		PFP2::VEC3& N = normal1[v];
@@ -738,7 +738,9 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 		double area;
 		integrator.Compute(&integral, &area, SHEvalCartesian_Error, &diffRad, isInHemisphere, N.data());
 
-        PFP2::REAL radError = integral / area;
+        PFP2::REAL radError = integral / area; //this operation potentially returns a nan value!
+        if(std::isnan(radError))
+            radError=0;
 
         distance1[v] = radError; //position error and normal error are feeling very lonely about this
 
@@ -747,7 +749,7 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
         //maxBarycentricArea = std::max(maxBarycentricArea, barycentricArea);         //in case of normalization emergency, use this
 
-        errors.push_back(std::pair(<PFP2::REAL, PFP2::REAL>(radError, barycentricArea));
+        errors.push_back(std::pair<PFP2::REAL, PFP2::REAL>(radError, barycentricArea));
 	}
 	);
 
@@ -774,16 +776,12 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
     for (PFP2::REAL& dist : distance1.iterable())
     {
-        if(std::isnan(dist))
-            validErrorsNumber--;
         if (dist < lowerBound) { dist = lowerBound; }
         if (dist > upperBound) { dist = upperBound; }
     }
 
     for(unsigned int i=0; i<errors.size(); ++i)
     {
-        if(!std::isnan(errors[i].first))
-        {
             ++iterationsNumber;
             lastValidIndex=i;
 
@@ -797,27 +795,27 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
             totalAreaWeights += errors[i].second;
             areaWgtDistance += errors[i].first*errors[i].second;
-        }
     }
 
     maxDistance = errors[lastValidIndex].first;
     avgDistance = iterationsNumber > 0 ? sumDistance/iterationsNumber : 0;
     uniformWgtDistance = uniformWgtDistance / (((double)validErrorsNumber+1)/2);     //sum of i/n is (n+1)/2
-    areaWgtDistance = totalAreaWeights > 0 ? areaWgtDistance / totalAreaWeights : 0;
 
 	integrator.Release();
 
     ofs << "Comparing " << mapName1.toStdString() << '(' << map1->getNbCells(VERTEX) << " vertices) and "
         << mapName2.toStdString() << '(' << map2->getNbCells(VERTEX) << " vertices)" << std::endl;
-    ofs << "Max distance: " << maxDistance << std::endl;
-    ofs << "Sum distance: " << sumDistance << std::endl;
-    ofs << "Avg distance (without ponderation): " << avgDistance << std::endl;
-    ofs << "Wgt distance (by local error value): " << uniformWgtDistance << std::endl;
-    ofs << "Wgt distance (by barycentric area value): " << areaWgtDistance << std::endl;
+    ofs << "Max errors: " << maxDistance << std::endl;
+    ofs << "Sum errors: " << sumDistance << std::endl;
+    ofs << "Avg error (without ponderation): " << avgDistance << std::endl;
+    ofs << "Wgt error (by local error value): " << uniformWgtDistance << std::endl;
+    ofs << "Wgt error (by barycentric area value, not divided): " << areaWgtDistance << std::endl;
+    areaWgtDistance = totalAreaWeights > 0 ? areaWgtDistance / totalAreaWeights : 0;
+    ofs << "Wgt error (by barycentric area value, divided by full ara): " << areaWgtDistance << std::endl;
 #ifdef IN_DEV
     //compare the actual area with the sum we found, should be extremly close or you've programmed something wrong
     ofs << "Debug: Sum of the weigths found: " << totalAreaWeights << std::endl;
-    ofs << "Debug: Actual full area computed: " << Algo::Surface::Geometry::totalArea<PFP2>((*map1), position1) << std::endl;
+    //ofs << "Debug: Actual full area computed: " << Algo::Surface::Geometry::totalArea<PFP2>((*map1), position1) << std::endl;
 #endif
     ofs << "=======================================================" << std::endl;
 
