@@ -684,17 +684,17 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 	// for each vertex of map1
 
     std::vector<std::pair<PFP2::REAL, PFP2::REAL> > errors;
-    PFP2::REAL maxFaceArea=0;
-    errors.reserve(map1->getNbCells(VERTEX));
+    PFP2::REAL maxBarycentricArea=0;
+    errors.reserve(map1->getNbCells(VERTEX)); //better allocate everything we'll need immediately
 
 	map2->setExternalThreadsAuthorization(true);
 
-	Parallel::foreach_cell<VERTEX>(*map1, [&] (Vertex v, unsigned int threadIndex)
-	{
+    Parallel::foreach_cell<VERTEX>(*map1, [&] (Vertex v, unsigned int threadIndex)
+    {
 		const PFP2::VEC3& P = position1[v];
 		PFP2::VEC3& N = normal1[v];
 
-		// find closest point on map2
+        // find closest point on map2 (naive)
 
 		PFP2::REAL minDist2 = std::numeric_limits<PFP2::REAL>::max();
 		Face closestFace;
@@ -740,12 +740,14 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
         PFP2::REAL radError = integral / area;
 
-		distance1[v] = radError;
+        distance1[v] = radError; //position error and normal error are feeling very lonely about this
 
-        PFP2::REAL faceArea = Algo::Surface::Geometry::triangleArea<PFP2>((*map2), closestFace, position2);
-        maxFaceArea = std::max(maxFaceArea, faceArea);
+        // barycentric area=sum of 1/3 of each area involved with the vertice
+        PFP2::REAL barycentricArea = Algo::Surface::Geometry::vertexBarycentricArea<PFP2>((*map1), v, position1);
 
-        errors.push_back(std::make_pair(radError, faceArea));
+        //maxBarycentricArea = std::max(maxBarycentricArea, barycentricArea);         //in case of normalization emergency, use this
+
+        errors.push_back(std::pair(<PFP2::REAL, PFP2::REAL>(radError, barycentricArea));
 	}
 	);
 
@@ -759,13 +761,13 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 	PFP2::REAL lowerBound = Q1 - 1.5*IQrange;
     PFP2::REAL upperBound = Q3 + 1.5*IQrange;
 
-    double maxDistance = 0;
-    double sumDistance = 0;
-    double avgDistance = 0;
-    double uniformWgtDistance = 0;
-    double areaWgtDistance = 0;
+    PFP2::REAL maxDistance = 0;
+    PFP2::REAL sumDistance = 0;
+    PFP2::REAL avgDistance = 0;
+    PFP2::REAL uniformWgtDistance = 0;
+    PFP2::REAL areaWgtDistance = 0;
 
-    double totalAreaWeights=0;
+    PFP2::REAL totalAreaWeights=0;
     unsigned int lastValidIndex=0;
     unsigned int iterationsNumber = 0;
     size_t validErrorsNumber = errors.size();
@@ -789,36 +791,45 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
             uniformWgtDistance += errors[i].first*((double)iterationsNumber/validErrorsNumber);
 
-            double localAreaDivByMaxArea = (double)errors[i].second/maxFaceArea;
-            totalAreaWeights += localAreaDivByMaxArea;
-            areaWgtDistance += errors[i].first*localAreaDivByMaxArea;
+            //double localAreaDivByMaxArea = (double)errors[i].second/maxBarycentricArea;
+            //totalAreaWeights += localAreaDivByMaxArea;
+            //areaWgtDistance += errors[i].first*localAreaDivByMaxArea; //once again, normalization emergency
+
+            totalAreaWeights += errors[i].second;
+            areaWgtDistance += errors[i].first*errors[i].second;
         }
     }
 
     maxDistance = errors[lastValidIndex].first;
     avgDistance = iterationsNumber > 0 ? sumDistance/iterationsNumber : 0;
     uniformWgtDistance = uniformWgtDistance / (((double)validErrorsNumber+1)/2);     //sum of i/n is (n+1)/2
-    areaWgtDistance = areaWgtDistance / totalAreaWeights;
+    areaWgtDistance = totalAreaWeights > 0 ? areaWgtDistance / totalAreaWeights : 0;
 
 	integrator.Release();
 
-    this->pythonRecording("computeRadianceDistance", "", mapName1, positionAttributeName1, normalAttributeName1, distanceAttributeName1,
-                            mapName2, positionAttributeName2, normalAttributeName2, distanceAttributeName2);
-
-	mh1->notifyAttributeModification(distance1);
-	mh2->notifyAttributeModification(distance2);
-
-    ofs << "Comparing " << mapName1.toStdString() << " and " << mapName2.toStdString() << std::endl;
+    ofs << "Comparing " << mapName1.toStdString() << '(' << map1->getNbCells(VERTEX) << " vertices) and "
+        << mapName2.toStdString() << '(' << map2->getNbCells(VERTEX) << " vertices)" << std::endl;
     ofs << "Max distance: " << maxDistance << std::endl;
     ofs << "Sum distance: " << sumDistance << std::endl;
-    ofs << "Avg distance: " << avgDistance << std::endl;
+    ofs << "Avg distance (without ponderation): " << avgDistance << std::endl;
     ofs << "Wgt distance (by local error value): " << uniformWgtDistance << std::endl;
-    ofs << "Wgt distance (by local face's area value): " << areaWgtDistance << std::endl;
+    ofs << "Wgt distance (by barycentric area value): " << areaWgtDistance << std::endl;
+#ifdef IN_DEV
+    //compare the actual area with the sum we found, should be extremly close or you've programmed something wrong
+    ofs << "Debug: Sum of the weigths found: " << totalAreaWeights << std::endl;
+    ofs << "Debug: Actual full area computed: " << Algo::Surface::Geometry::totalArea<PFP2>((*map1), position1) << std::endl;
+#endif
     ofs << "=======================================================" << std::endl;
 
 #ifdef IN_DEV
     ofs.close();
 #endif
+
+    this->pythonRecording("computeRadianceDistance", "", mapName1, positionAttributeName1, normalAttributeName1, distanceAttributeName1,
+                            mapName2, positionAttributeName2, normalAttributeName2, distanceAttributeName2);
+
+    mh1->notifyAttributeModification(distance1);
+    mh2->notifyAttributeModification(distance2);
 }
 
 void Surface_Radiance_Plugin::checkNbVerticesAndExport(Surface_Radiance_Plugin* p, const unsigned int* nbVertices)
