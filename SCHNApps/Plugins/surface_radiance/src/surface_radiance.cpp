@@ -419,7 +419,7 @@ MapHandlerGen* Surface_Radiance_Plugin::importFromFile_P(const QString& fileName
 			}
 			CGoGN::Algo::Surface::Import::importMesh<PFP2>(*map, importer);
 
-			// get vertex position attribute
+            // get vertex position attribute
 			VertexAttribute<PFP2::VEC3, PFP2::MAP> position = map->getAttribute<PFP2::VEC3, VERTEX, PFP2::MAP>("position") ;
 			VertexAttribute<PFP2::VEC3, PFP2::MAP> tangent = map->getAttribute<PFP2::VEC3, VERTEX, PFP2::MAP>("tangent");
 			VertexAttribute<PFP2::VEC3, PFP2::MAP> normal = map->getAttribute<PFP2::VEC3, VERTEX, PFP2::MAP>("normal");
@@ -619,22 +619,18 @@ void Surface_Radiance_Plugin::decimate(const QString& mapName, const QString& po
 	mh->notifyAttributeModification(position);
 }
 
-void Surface_Radiance_Plugin::computeRadianceDistance(
-	const QString& mapName1,
-	const QString& positionAttributeName1,
-	const QString& normalAttributeName1,
-	const QString& distanceAttributeName1,
-	const QString& mapName2,
-	const QString& positionAttributeName2,
-	const QString& normalAttributeName2,
-	const QString& distanceAttributeName2)
+void Surface_Radiance_Plugin::computeRadianceDistance(const QString& mapName1,
+    const QString& positionAttributeName1,
+    const QString& normalAttributeName1,
+    const QString& distanceAttributeName1,
+    const QString& mapName2,
+    const QString& positionAttributeName2,
+    const QString& normalAttributeName2,
+    const QString& distanceAttributeName2,
+    const QString& outFile)
 {
-#ifdef IN_DEV
     std::ofstream ofs;
     ofs.open ("../../../../../Dropbox/St/radianceDistance.log", std::ostream::app);
-#else
-    std::ostream& ofs=std::cout;
-#endif
 
 	MapHandler<PFP2>* mh1 = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName1));
 	if(mh1 == NULL)
@@ -684,7 +680,7 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 	// for each vertex of map1
 
     std::vector<std::pair<PFP2::REAL, PFP2::REAL> > errors;
-    PFP2::REAL maxBarycentricArea=0;
+
     errors.reserve(map1->getNbCells(VERTEX)); //better allocate everything we'll need immediately
 
 	map2->setExternalThreadsAuthorization(true);
@@ -709,8 +705,6 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
             }
         }
 
-//		PFP2::REAL minDist = sqrt(minDist2);
-
 		double l1, l2, l3;
 		Algo::Geometry::closestPointInTriangle<PFP2>(*map2, closestFace, position2, P, l1, l2, l3);
 
@@ -729,25 +723,23 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 		const Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>& R1 = mapParams2.radiance[closestFace.dart];
 		const Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>& R2 = mapParams2.radiance[map2->phi1(closestFace.dart)];
 		const Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>& R3 = mapParams2.radiance[map2->phi_1(closestFace.dart)];
-		Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3> CPR = R1*l1 + R2*l2 + R3*l3;
+
+        Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3> CPR = R1*l1 + R2*l2 + R3*l3;
 
 		Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3> diffRad(mapParams1.radiance[v]);
-		diffRad -= CPR;
 
-		double integral;
-		double area;
-		integrator.Compute(&integral, &area, SHEvalCartesian_Error, &diffRad, isInHemisphere, N.data());
+        diffRad -= CPR;
 
-        PFP2::REAL radError = integral / area; //this operation potentially returns a nan value!
-        if(std::isnan(radError))
-            radError=0;
+        double integral;
+        double area;
+        integrator.Compute(&integral, &area, SHEvalCartesian_Error, &diffRad, isInHemisphere, N.data());
+
+        PFP2::REAL radError = integral / area;
 
         distance1[v] = radError; //position error and normal error are feeling very lonely about this
 
         // barycentric area=sum of 1/3 of each area involved with the vertice
         PFP2::REAL barycentricArea = Algo::Surface::Geometry::vertexBarycentricArea<PFP2>((*map1), v, position1);
-
-        //maxBarycentricArea = std::max(maxBarycentricArea, barycentricArea);         //in case of normalization emergency, use this
 
         errors.push_back(std::pair<PFP2::REAL, PFP2::REAL>(radError, barycentricArea));
 	}
@@ -764,15 +756,12 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
     PFP2::REAL upperBound = Q3 + 1.5*IQrange;
 
     PFP2::REAL maxDistance = 0;
-    PFP2::REAL sumDistance = 0;
     PFP2::REAL avgDistance = 0;
-    PFP2::REAL uniformWgtDistance = 0;
-    PFP2::REAL areaWgtDistance = 0;
+    PFP2::REAL avgDistanceN2 = 0;
+    PFP2::REAL areaDistance = 0;
+    PFP2::REAL areaDistanceN2 = 0;
 
     PFP2::REAL totalAreaWeights=0;
-    unsigned int lastValidIndex=0;
-    unsigned int iterationsNumber = 0;
-    size_t validErrorsNumber = errors.size();
 
     for (PFP2::REAL& dist : distance1.iterable())
     {
@@ -782,42 +771,27 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
     for(unsigned int i=0; i<errors.size(); ++i)
     {
-            ++iterationsNumber;
-            lastValidIndex=i;
+        avgDistance += errors[i].first;
+        avgDistanceN2 += errors[i].first*errors[i].first;
 
-            sumDistance += errors[i].first;
+        areaDistance += errors[i].first*errors[i].second;
+        areaDistanceN2 += errors[i].first*errors[i].first*errors[i].second;
 
-            uniformWgtDistance += errors[i].first*((double)iterationsNumber/validErrorsNumber);
-
-            //double localAreaDivByMaxArea = (double)errors[i].second/maxBarycentricArea;
-            //totalAreaWeights += localAreaDivByMaxArea;
-            //areaWgtDistance += errors[i].first*localAreaDivByMaxArea; //once again, normalization emergency
-
-            totalAreaWeights += errors[i].second;
-            areaWgtDistance += errors[i].first*errors[i].second;
+        totalAreaWeights += errors[i].second;
     }
 
-    maxDistance = errors[lastValidIndex].first;
-    avgDistance = iterationsNumber > 0 ? sumDistance/iterationsNumber : 0;
-    uniformWgtDistance = uniformWgtDistance / (((double)validErrorsNumber+1)/2);     //sum of i/n is (n+1)/2
+    maxDistance = errors[errors.size()-1].first;
+
+    avgDistance     = errors.size() > 0 ? avgDistance/errors.size() : 0;
+    avgDistanceN2   = errors.size() > 0 ? sqrt(avgDistanceN2/errors.size()) : 0;
+
+    areaDistance    = totalAreaWeights > 0 ? areaDistance / totalAreaWeights : 0;
+    areaDistanceN2  = totalAreaWeights > 0 ? sqrt(areaDistanceN2 / totalAreaWeights) : 0;
 
 	integrator.Release();
 
-    ofs << "Comparing " << mapName1.toStdString() << '(' << map1->getNbCells(VERTEX) << " vertices) and "
-        << mapName2.toStdString() << '(' << map2->getNbCells(VERTEX) << " vertices)" << std::endl;
-    ofs << "Max errors: " << maxDistance << std::endl;
-    ofs << "Sum errors: " << sumDistance << std::endl;
-    ofs << "Avg error (without ponderation): " << avgDistance << std::endl;
-    ofs << "Wgt error (by local error value): " << uniformWgtDistance << std::endl;
-    ofs << "Wgt error (by barycentric area value, not divided): " << areaWgtDistance << std::endl;
-    areaWgtDistance = totalAreaWeights > 0 ? areaWgtDistance / totalAreaWeights : 0;
-    ofs << "Wgt error (by barycentric area value, divided by full ara): " << areaWgtDistance << std::endl;
-#ifdef IN_DEV
-    //compare the actual area with the sum we found, should be extremly close or you've programmed something wrong
-    ofs << "Debug: Sum of the weigths found: " << totalAreaWeights << std::endl;
-    //ofs << "Debug: Actual full area computed: " << Algo::Surface::Geometry::totalArea<PFP2>((*map1), position1) << std::endl;
-#endif
-    ofs << "=======================================================" << std::endl;
+    ofs << map1->getNbCells(VERTEX) << ',' << map2->getNbCells(VERTEX) << ',' << maxDistance << ',';
+    ofs << avgDistance << ',' << avgDistanceN2 << ',' << areaDistance << ',' << areaDistanceN2 << std::endl;
 
 #ifdef IN_DEV
     ofs.close();
@@ -828,6 +802,116 @@ void Surface_Radiance_Plugin::computeRadianceDistance(
 
     mh1->notifyAttributeModification(distance1);
     mh2->notifyAttributeModification(distance2);
+}
+
+bool Surface_Radiance_Plugin::quickRadianceValid(const Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>& radiance)
+{
+    PFP2::VEC3 rCheck=radiance.get_coef(0,0);
+    if(rCheck.hasNan() || !std::isfinite(rCheck[0]))
+        return false;
+    return true;
+}
+
+void Surface_Radiance_Plugin::quickFixRadiance(const QString& mapName, const QString& positionAttributeName)
+{
+    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
+    if(mh == NULL)
+        return;
+
+    PFP2::MAP* map = mh->getMap();
+    MapParameters& mapParams = h_mapParameterSet[mh];
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> position = mh->getAttribute<PFP2::VEC3, VERTEX>(positionAttributeName);
+    if(!position.isValid())
+        return;
+
+    Parallel::foreach_cell<VERTEX>(*map, [&] (Vertex v, unsigned int threadIndex)
+    {
+        if(!quickRadianceValid(mapParams.radiance[v]))
+        {
+            CGoGNerr << "Found vertice with infinite radiance coefs at position " << position[v] << CGoGNendl;
+            mapParams.radiance[v.dart]=mapParams.radiance[map->phi1(v.dart)];
+        }
+    });
+}
+
+void Surface_Radiance_Plugin::quickFixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString& normalAttributeName)
+{
+    //Checks only critical radiances, a.k.a radiances with null coefs
+    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
+    if(mh == NULL)
+        return;
+
+    PFP2::MAP* map = mh->getMap();
+    MapParameters& mapParams = h_mapParameterSet[mh];
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> position = mh->getAttribute<PFP2::VEC3, VERTEX>(positionAttributeName);
+    if(!position.isValid())
+        return;
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> normal = mh->getAttribute<PFP2::VEC3, VERTEX>(normalAttributeName);
+    if(!normal.isValid())
+        return;
+
+    foreach_cell<VERTEX>(*map, [&] (Vertex v)
+    {
+        if(mapParams.radiance[v].get_coef(0,0)[0]==0)
+        foreach_cell<VERTEX>(*map, [&] (Vertex v2)
+        {
+            if(position[v]==position[v2] && mapParams.radiance[v2.dart].get_coef(0,0)[0]!=0)
+            {
+                CGoGNerr << "Found vertices with same position at position "
+                         << position[v] << " and normals " << normal[v] << " and " << normal[v2]
+                         << " and radiance coefs " << mapParams.radiance[v.dart] << " and " << mapParams.radiance[v2.dart] << CGoGNendl;
+                mapParams.radiance[v.dart]=mapParams.radiance[v2.dart];
+            }
+        });
+    });
+
+}
+
+void Surface_Radiance_Plugin::slowFixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString& normalAttributeName)
+{
+    //Checks every radiances and tries to find a vertice at the same
+    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
+    if(mh == NULL)
+        return;
+
+    PFP2::MAP* map = mh->getMap();
+    MapParameters& mapParams = h_mapParameterSet[mh];
+
+    //for time optimization purposes
+    std::vector<Vertex> checkedVertexVector;
+    checkedVertexVector.reserve(map->getNbCells(VERTEX));
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> position = mh->getAttribute<PFP2::VEC3, VERTEX>(positionAttributeName);
+    if(!position.isValid())
+        return;
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> normal = mh->getAttribute<PFP2::VEC3, VERTEX>(normalAttributeName);
+    if(!normal.isValid())
+        return;
+
+    foreach_cell<VERTEX>(*map, [&] (Vertex v)
+    {
+        for(Vertex v2 : checkedVertexVector)
+        {
+            if(position[v]==position[v2])
+            {
+                assert(v!=v2);
+                CGoGNerr << "Found vertices with same position at position "
+                         << position[v] << " and normals " << normal[v] << " and " << normal[v2]
+                         << " and radiance coefs " << mapParams.radiance[v.dart] << " and " << mapParams.radiance[v2.dart] << CGoGNendl;
+                if(mapParams.radiance[v2.dart].get_coef(0,0)[0]!=0)
+                    mapParams.radiance[v.dart]=mapParams.radiance[v2.dart];
+                else
+                    mapParams.radiance[v2.dart]=mapParams.radiance[v.dart];
+            }
+
+        }
+        checkedVertexVector.push_back(v);
+    });
+
 }
 
 void Surface_Radiance_Plugin::checkNbVerticesAndExport(Surface_Radiance_Plugin* p, const unsigned int* nbVertices)
@@ -855,6 +939,11 @@ void Surface_Radiance_Plugin::exportPLY(
 	typedef PFP2::MAP MAP;
 	typedef PFP2::REAL REAL;
 	typedef PFP2::VEC3 VEC3;
+
+#ifdef IN_DEV
+    quickFixRadiance(mapName, positionAttributeName);
+    slowFixDoubledVertices(mapName, positionAttributeName, normalAttributeName);
+#endif
 
 	MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
 	if(mh == NULL)

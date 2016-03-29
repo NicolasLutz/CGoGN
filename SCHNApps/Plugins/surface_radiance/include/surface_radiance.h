@@ -106,7 +106,7 @@ private slots:
 	// slots called from MapHandler signals
 	void vboAdded(Utils::VBO* vbo);
 	void vboRemoved(Utils::VBO* vbo);
-	void attributeModified(unsigned int orbit, QString nameAttr);
+    void attributeModified(unsigned int orbit, QString nameAttr);
 
 	void importFromFileDialog_SH();
 	void importFromFileDialog_P();
@@ -135,7 +135,8 @@ public slots:
 		const QString& mapName2,
 		const QString& positionAttributeName2,
 		const QString& normalAttributeName2,
-		const QString& distanceAttributeName2
+        const QString& distanceAttributeName2,
+        const QString& outFile = QString()
 	);
 	void exportPLY(
 		const QString& mapName,
@@ -148,6 +149,10 @@ protected:
 	MapHandlerGen* currentlyDecimatedMap() { return m_currentlyDecimatedMap; }
 	bool currentDecimationHalf() { return m_currentDecimationHalf; }
 	static void checkNbVerticesAndExport(Surface_Radiance_Plugin* p, const unsigned int* nbVertices);
+    bool quickRadianceValid(const Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>& radiance);
+    void quickFixRadiance(const QString& mapName, const QString& positionAttributeName);
+    void quickFixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString &normalAttributeName);
+    void slowFixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString &normalAttributeName);
 
 	Surface_Radiance_DockTab* m_dockTab;
 
