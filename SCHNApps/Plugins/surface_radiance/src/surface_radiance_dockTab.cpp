@@ -23,6 +23,7 @@ Surface_Radiance_DockTab::Surface_Radiance_DockTab(SCHNApps* s, Surface_Radiance
 	connect(combo_binormalVBO, SIGNAL(currentIndexChanged(int)), this, SLOT(binormalVBOChanged(int)));
 	connect(checkbox_fragInterp, SIGNAL(stateChanged(int)), this, SLOT(fragmentInterpolationChanged(int)));
 	connect(button_decimate, SIGNAL(clicked()), this, SLOT(decimateClicked()));
+    connect(button_taubinFilter, SIGNAL(clicked()), this, SLOT(applyTaubinFilterClicked()));
 }
 
 
@@ -122,6 +123,19 @@ void Surface_Radiance_DockTab::decimateClicked()
 }
 
 
+void CGoGN::SCHNApps::Surface_Radiance_DockTab::applyTaubinFilterClicked()
+{
+    m_plugin->applyTaubinFilter(
+        m_schnapps->getSelectedMap()->getName(),
+        combo_positionVBO->currentText(),
+        spin_taubinIterations->value());
+
+    m_plugin->pythonRecording("applyTaubinFilter", "",
+        m_schnapps->getSelectedMap()->getName(),
+        combo_positionVBO->currentText(),
+        spin_taubinIterations->value()
+    );
+}
 
 
 

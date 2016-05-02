@@ -12,6 +12,8 @@
 #include "Utils/drawer.h"
 
 #include "Algo/Decimation/decimation.h"
+#include "Algo/Geometry/intersection.h"
+#include "Algo/Filtering/taubin.h"
 
 namespace CGoGN
 {
@@ -46,6 +48,10 @@ struct MapParameters
 	CGoGN::Utils::ShaderRadiancePerVertex* radiancePerVertexShader;
 	CGoGN::Utils::ShaderRadiancePerVertex_P* radiancePerVertexPShader;
 
+    //This is new~
+    int radianceResolution;
+    int radianceNb_coefs;
+
 	VertexAttribute<Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>, PFP2::MAP> radiance;
 	VertexAttribute<Utils::BivariatePolynomials<PFP2::REAL, PFP2::VEC3>, PFP2::MAP> radiance_P;
 
@@ -60,6 +66,116 @@ struct MapParameters
 	Algo::Surface::Decimation::ApproximatorGen<PFP2>* radianceApproximator;
 
 	Algo::Surface::Decimation::Selector<PFP2>* selector;
+};
+
+class FaceCluster
+{
+public:
+
+    FaceCluster();
+    FaceCluster(const PFP2::VEC3& bbMin, const PFP2::VEC3& bbMax, unsigned int x, unsigned int y, unsigned int z);
+    ~FaceCluster();
+
+    //Checks if p is in cluster
+    bool contains(const PFP2::VEC3 &p) {return m_bb.contains(p);}
+    bool contains(const PFP2::VEC3 &p1, const PFP2::VEC3 &p2) {return m_bb.contains(p1, p2);}
+    bool contains(PFP2::MAP& map, Face f, const VertexAttribute<PFP2::VEC3, PFP2::MAP>& position);
+
+    //Adds f in cluster without asking questions
+    void addFace(Face f) {m_cluster.push_back(f);}
+
+    //find the closest triangular face from p in the cluster fc and returns false if there were no faces in the cluster.
+    //it fills face with the found face and distance2 with the squared distance found, if the original distance2 was bigger.
+    bool closestFaceInCluster(PFP2::MAP& map, const PFP2::VEC3& p, const VertexAttribute<PFP2::VEC3, PFP2::MAP>& position,
+                              Face& face, PFP2::REAL& distance2) const;
+
+    size_t size() const {return m_cluster.size();}
+    const PFP2::VEC3& bbMin() const {return m_bb.min();}
+    const PFP2::VEC3& bbMax() const {return m_bb.max();}
+
+    typedef std::vector<Face>::iterator iterator;
+    typedef std::vector<Face>::const_iterator const_iterator;
+
+    iterator begin() {return m_cluster.begin();}
+    const_iterator begin() const {return m_cluster.begin();}
+
+    iterator end() {return m_cluster.end();}
+    const_iterator end() const {return m_cluster.end();}
+
+    //mark for algorithms
+    bool marked() const {return m_mark;}
+    void mark(bool b) {m_mark=b;}
+    void toggleMark() {m_mark=!m_mark;}
+
+    //index
+    unsigned int x() const {return m_x;}
+    unsigned int y() const {return m_y;}
+    unsigned int z() const {return m_z;}
+
+private:
+    std::vector<Face>               m_cluster;
+    Geom::BoundingBox<PFP2::VEC3>   m_bb;
+    bool                            m_mark;
+    unsigned int m_x, m_y, m_z;
+};
+
+class FaceClustersAggregation
+{
+public:
+
+    FaceClustersAggregation(const Geom::BoundingBox<PFP2::VEC3>& boundingBox,
+                            size_t width, size_t height, size_t depth);
+    ~FaceClustersAggregation();
+
+    //expands the aggregation by adding fc in it
+    void addCluster(const FaceCluster& fc) {m_clusters.push_back(fc);}
+
+    //adds f in every clusters it intersects
+    void addElement(PFP2::MAP& map, Face f,
+                    const VertexAttribute<PFP2::VEC3, PFP2::MAP>& position);
+
+    //Clusterize the whole map
+    void clusterizeMap(PFP2::MAP& map, const VertexAttribute<PFP2::VEC3, PFP2::MAP>& position,
+                       const VertexAttribute<PFP2::VEC3, PFP2::MAP>& normal,
+                       const PFP2::VEC3& N, PFP2::REAL threshold);
+
+    //find the distance from p to the other Cluster, provided the cluster p belongs to.
+    PFP2::REAL squaredDistancePoint2Cluster(const PFP2::VEC3& p, const FaceCluster& cluster);
+
+    //find the closest triangular face from p on map considering vertex attribute position
+    Face findFace(PFP2::MAP& map, const PFP2::VEC3& p, const VertexAttribute<PFP2::VEC3, PFP2::MAP>& position);
+
+    //get the cluster at the current indexes
+    FaceCluster* getCluster(unsigned int i, unsigned int j, unsigned int k);
+
+    //get the cluster p is at, and the closest if p is outside of the clusterized area
+    FaceCluster* getCluster(const PFP2::VEC3& p);
+
+    size_t getNbFaces() const {return m_nbFaces;}
+
+    typedef std::vector<FaceCluster>::iterator iterator;
+    typedef std::vector<FaceCluster>::const_iterator const_iterator;
+
+    iterator begin() {return m_clusters.begin();}
+    const_iterator begin() const {return m_clusters.begin();}
+
+    iterator end() {return m_clusters.end();}
+    const_iterator end() const {return m_clusters.end();}
+
+private:
+
+    typedef std::pair<FaceCluster*, PFP2::REAL> distanceEval_t;
+    class DistanceEval_Compare
+    {
+    public:
+        DistanceEval_Compare(){}
+        bool operator()(const distanceEval_t& object, const distanceEval_t& other){return object.second<other.second;}
+    };
+    std::vector<FaceCluster>        m_clusters;
+    size_t                          m_nbFaces;
+    size_t                          m_width;
+    size_t                          m_height;
+    size_t                          m_depth;
 };
 
 class Surface_Radiance_Plugin : public PluginInteraction
@@ -112,7 +228,7 @@ private slots:
 	void importFromFileDialog_P();
 
 	void openComputeRadianceDistanceDialog();
-	void computeRadianceDistanceFromDialog();
+    void computeRadianceDistanceFromDialog();
 
 public slots:
 	// slots for Python calls
@@ -128,6 +244,10 @@ public slots:
 		bool halfCollapse = false,
 		bool exportMeshes = false
 	);
+    void applyTaubinFilter(const QString& mapName,
+        const QString& positionAttributeName,
+        int iterationsNumber
+    );
 	void computeRadianceDistance(const QString& mapName1,
 		const QString& positionAttributeName1,
 		const QString& normalAttributeName1,
@@ -144,15 +264,35 @@ public slots:
 		const QString& normalAttributeName,
 		const QString& filename
 	);
+    void exportPLY_superiorResolution(
+        const QString& mapName,
+        const QString& positionAttributeName,
+        const QString& normalAttributeName,
+        const QString& filename,
+        int resolution
+    );
+    void fixSHMap(const QString& mapName,
+        const QString& positionAttributeName,
+        const QString& normalAttributeName
+    , double scale=1);
+    void logRadianceDetails(
+        const QString& mapName,
+        const QString& filename
+    );
 
 protected:
 	MapHandlerGen* currentlyDecimatedMap() { return m_currentlyDecimatedMap; }
 	bool currentDecimationHalf() { return m_currentDecimationHalf; }
 	static void checkNbVerticesAndExport(Surface_Radiance_Plugin* p, const unsigned int* nbVertices);
     bool quickRadianceValid(const Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>& radiance);
-    void quickFixRadiance(const QString& mapName, const QString& positionAttributeName);
-    void quickFixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString &normalAttributeName);
-    void slowFixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString &normalAttributeName);
+
+    void fixNaNRadiance(const QString& mapName, const QString& positionAttributeName);
+    void fixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString &normalAttributeName);
+    void fixSize(const QString& mapName, const QString& positionAttributeName, double scale);
+
+    //colors in ugly magenta vertices that have a normal that has a scalar product with N inferior to threshold
+    void indiscriminate(const QString& mapName, const QString& positionAttributeName, const QString &normalAttributeName,
+                        PFP2::VEC3 N, PFP2::REAL threshold);
 
 	Surface_Radiance_DockTab* m_dockTab;
 
@@ -167,7 +307,7 @@ protected:
 	unsigned int nextExportIndex;
 
 	QAction* m_importSHAction;
-	QAction* m_importPAction;
+    QAction* m_importPAction;
 
 	static bool isInHemisphere(double x, double y, double z, void* u)
 	{ // true iff [x,y,z] and u have the same direction

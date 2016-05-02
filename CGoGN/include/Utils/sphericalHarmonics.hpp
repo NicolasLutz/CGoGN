@@ -55,11 +55,11 @@ void SphericalHarmonics<Tscalar,Tcoef>::set_level(int res_level)
 {
 	if (res_level != resolution)
 	{
-		assert(res_level >= 0 && res_level < max_resolution);
-		assert(cpt_instances == 0);
-		resolution = res_level;
-		nb_coefs = (resolution + 1) * (resolution + 1);
-		init_K_tab();
+        assert(res_level >= 0 && res_level < max_resolution);
+                //assert(cpt_instances == 0);
+        resolution = res_level;
+        nb_coefs = (resolution + 1) * (resolution + 1);
+        init_K_tab();
 	}
 }
 
@@ -100,7 +100,7 @@ void SphericalHarmonics<Tscalar,Tcoef>::set_eval_direction (Tscalar x, Tscalar y
 template <typename Tscalar,typename Tcoef>
 Tcoef SphericalHarmonics<Tscalar,Tcoef>::evaluate (unsigned int threadId) const
 {
-	assert(threadId < 32);
+    assert(threadId < 32);
 	Tcoef r (0); // (0.0,0.0,0.0); //  TODO : use Tcoef (0)
 	for (int i = 0; i < nb_coefs; i++)
 	{

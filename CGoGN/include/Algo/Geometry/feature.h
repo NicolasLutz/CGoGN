@@ -176,7 +176,7 @@ std::vector<typename PFP::VEC3> occludingContoursDetection(
 	typename PFP::MAP& map,
 	const typename PFP::VEC3& cameraPosition,
 	const VertexAttribute<typename PFP::VEC3, typename PFP::MAP>& position,
-	const VertexAttribute<typename PFP::VEC3, typename PFP::MAP>& normal) ;
+    const VertexAttribute<typename PFP::VEC3, typename PFP::MAP>& normal) ;
 
 } // namespace Geometry
 

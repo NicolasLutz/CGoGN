@@ -26,7 +26,7 @@ template <typename Tscalar, typename Tcoef>
 class SphericalHarmonics
 {
 private :
-	static const int max_resolution = 10 ;                   // max possible resolution for any object of that class
+    static const int max_resolution = 10 ;                   // max possible resolution for any object of that class
 	static int resolution ;                                  // actual resolution level
 	static int nb_coefs ;                                    // number of coefs = (resolution + 1) * (resolution + 1)
 	static unsigned long cpt_instances;                      // number of instances of the class

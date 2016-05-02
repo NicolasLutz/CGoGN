@@ -17,16 +17,243 @@
 #include <QFileDialog>
 #include <QFileInfo>
 
-#define IN_DEV
-#ifdef IN_DEV
 #include <fstream>
-#endif
+#define IN_DEV
 
 namespace CGoGN
 {
 
 namespace SCHNApps
 {
+
+//FaceCluster
+
+FaceCluster::FaceCluster() : m_cluster(), m_mark(false)
+{}
+
+FaceCluster::~FaceCluster()
+{}
+
+FaceCluster::FaceCluster(const PFP2::VEC3& bbMin, const PFP2::VEC3& bbMax, unsigned int x, unsigned int y, unsigned int z):
+    m_cluster(), m_bb(bbMin), m_mark(false), m_x(x), m_y(y), m_z(z)
+{
+    m_bb.addPoint(bbMax);
+    assert(m_bb.isInitialized() || "BoundingBox was not initialized correctly.");
+}
+
+bool FaceCluster::contains(PFP2::MAP &map, Face f, const VertexAttribute<PFP2::VEC3, PFP2::MAP> &position)
+{
+    PFP2::VEC3 s1=position[f.dart];
+    PFP2::VEC3 s2=position[map.phi1(f.dart)];
+    PFP2::VEC3 s3=position[map.phi_1(f.dart)];
+
+    //bounding boxes intersect? Find the bounding box of the face
+    PFP2::VEC3 minBB, maxBB;
+    for(unsigned int i=0; i<3; ++i)
+    {
+        minBB[i]=std::min(s1[i], std::min(s2[i], s3[i]));
+        maxBB[i]=std::max(s1[i], std::min(s2[i], s3[i]));
+    }
+    Geom::BoundingBox<PFP2::VEC3> bbTriangle(minBB);
+    bbTriangle.addPoint(maxBB);
+
+    if(!m_bb.intersects(bbTriangle))
+        return false;
+
+    //edges of the triangle intersect the bounding box?
+    if(!contains(s1, s2) && !contains(s2,s3) && !contains(s3,s1))
+    {
+        //Note: this case is very rare.
+        //do the diagonals of the bounding box intersect the triangle? (triangle is bigger than bounding box)
+
+        //find bounding box vertices
+        PFP2::VEC3 garbageInter;
+        PFP2::VEC3 p2=m_bb.min(), p3=m_bb.min(), p4=m_bb.min(), p5=m_bb.max(), p6=m_bb.max(), p7=m_bb.max();
+        p2[0]=m_bb.max()[0];
+        p3[1]=m_bb.max()[1];
+        p4[2]=m_bb.max()[2];
+        p5[0]=m_bb.min()[0];
+        p6[1]=m_bb.min()[1];
+        p7[2]=m_bb.min()[2];
+
+        //test diagonal intersections to check if the bounding box is inside the triangle
+        return Algo::Surface::Geometry::intersectionSegmentConvexFace<PFP2>(map, f, position, m_bb.min(), m_bb.max(), garbageInter)
+        || Algo::Surface::Geometry::intersectionSegmentConvexFace<PFP2>(map, f, position, p2, p5, garbageInter)
+        || Algo::Surface::Geometry::intersectionSegmentConvexFace<PFP2>(map, f, position, p3, p6, garbageInter)
+        || Algo::Surface::Geometry::intersectionSegmentConvexFace<PFP2>(map, f, position, p4, p7, garbageInter);
+    }
+    else
+        return true;
+}
+
+bool FaceCluster::closestFaceInCluster(PFP2::MAP& map, const PFP2::VEC3& p, const VertexAttribute<PFP2::VEC3, PFP2::MAP>& position,
+                                       Face& face, PFP2::REAL& distance2) const
+{
+    bool foundBetter=false;
+    for(Face f : m_cluster)
+    {
+        PFP2::REAL dist = Algo::Geometry::squaredDistancePoint2Face<PFP2>(map, f, position, p);
+        if (dist < distance2)
+        {
+            foundBetter=true;
+            distance2 = dist;
+            face = f;
+        }
+    }
+    return foundBetter;
+}
+
+//FaceClusterAggregation
+
+FaceClustersAggregation::FaceClustersAggregation(const Geom::BoundingBox<PFP2::VEC3>& boundingBox,
+                                                 size_t width, size_t height, size_t depth):
+    m_clusters(), m_nbFaces(0), m_width(width), m_height(height), m_depth(depth)
+{
+    m_clusters.reserve(m_width*m_height*m_depth);
+    PFP2::VEC3 minBB=boundingBox.min();
+    PFP2::VEC3 maxBB=boundingBox.max();
+    PFP2::VEC3 singleClusterSize=(maxBB-minBB);
+    singleClusterSize[0]/=m_width;
+    singleClusterSize[1]/=m_height;
+    singleClusterSize[2]/=m_depth;
+    PFP2::VEC3 minCurrentBB;
+    PFP2::VEC3 maxCurrentBB;
+    for(unsigned int i=0; i<m_width; ++i)
+    {
+        PFP2::REAL iDist=singleClusterSize[0]*i;
+        minCurrentBB[0]=minBB[0] + iDist;
+        maxCurrentBB[0]=minCurrentBB[0] + singleClusterSize[0];
+        for(unsigned int j=0; j<m_height; ++j)
+        {
+            PFP2::REAL jDist=singleClusterSize[1]*j;
+            minCurrentBB[1]=minBB[1] + jDist;
+            maxCurrentBB[1]=minCurrentBB[1] + singleClusterSize[1];
+
+            for(unsigned int k=0; k<m_depth; ++k)
+            {
+                PFP2::REAL kDist=singleClusterSize[2]*k;
+                minCurrentBB[2]=minBB[2] + kDist;
+                maxCurrentBB[2]=minCurrentBB[2] + singleClusterSize[2];
+
+                m_clusters.push_back(FaceCluster(minCurrentBB, maxCurrentBB, i, j, k));
+            }
+        }
+    }
+}
+
+FaceClustersAggregation::~FaceClustersAggregation()
+{}
+
+void FaceClustersAggregation::addElement(PFP2::MAP& map, Face f,
+                                         const VertexAttribute<PFP2::VEC3, PFP2::MAP>& position)
+{
+    for(FaceCluster& fc : m_clusters)
+    {
+        if(fc.contains(map, f, position))
+        {
+            fc.addFace(f);
+        }
+    }
+}
+
+void FaceClustersAggregation::clusterizeMap(PFP2::MAP& map, const VertexAttribute<PFP2::VEC3, PFP2::MAP>& position,
+                                            const VertexAttribute<PFP2::VEC3, PFP2::MAP>& normal,
+                                            const PFP2::VEC3& N, PFP2::REAL threshold)
+{
+    for(Face f : allFacesOf(map))
+    {
+        if(N*normal[f.dart]>=threshold || N*normal[map.phi1(f.dart)]>=threshold || N*normal[map.phi_1(f.dart)]>=threshold)
+        {//discard f if every vertice of f disrespects the discrimination
+            addElement(map, f, position);
+        }
+    }
+}
+
+PFP2::REAL FaceClustersAggregation::squaredDistancePoint2Cluster(const PFP2::VEC3& p, const FaceCluster& cluster)
+{
+    //find where otherCluster is in comparasion of clusterOfP
+    PFP2::REAL distance2;
+    PFP2::VEC3 clusterMin=cluster.bbMin();
+    PFP2::VEC3 clusterMax=cluster.bbMax();
+
+    PFP2::REAL dx=std::max(clusterMin[0]-p[0], std::max(PFP2::REAL(0), p[0]-clusterMax[0]));
+    PFP2::REAL dy=std::max(clusterMin[1]-p[1], std::max(PFP2::REAL(0), p[1]-clusterMax[1]));
+    PFP2::REAL dz=std::max(clusterMin[2]-p[2], std::max(PFP2::REAL(0), p[2]-clusterMax[2]));
+
+    distance2 = (dx*dx + dy*dy + dz*dz);
+    return distance2;
+}
+
+Face FaceClustersAggregation::findFace(PFP2::MAP &map, const PFP2::VEC3 &p, const VertexAttribute<PFP2::VEC3, PFP2::MAP> &position)
+{
+    std::priority_queue<distanceEval_t, std::vector<distanceEval_t>, DistanceEval_Compare> pq;
+    PFP2::REAL minDist2= std::numeric_limits<PFP2::REAL>::max();
+    std::vector<FaceCluster*> markedClusterList;
+    Face closestFace;
+    FaceCluster* scopedFC;
+
+    pq.push(distanceEval_t(scopedFC=getCluster(p), minDist2));
+    pq.top().first->toggleMark();
+    markedClusterList.push_back(scopedFC);
+    pq.top().first->closestFaceInCluster(map, p, position, closestFace, minDist2);
+
+    unsigned int x=scopedFC->x();
+    unsigned int y=scopedFC->y();
+    unsigned int z=scopedFC->z();
+
+    while(!pq.empty())
+    {
+        distanceEval_t pq_top=pq.top();
+        x=pq_top.first->x();
+        y=pq_top.first->y();
+        z=pq_top.first->z();
+        pq.pop();
+        for(int i=-1; i<2; ++i)
+            for(int j=-1; j<2; ++j)
+                for(int k=-1; k<2; ++k)
+                {
+                    PFP2::REAL clusterDistance2;
+                    scopedFC=getCluster(x+i, y+j, z+k);
+                    if(scopedFC!=NULL && !scopedFC->marked() && (clusterDistance2=squaredDistancePoint2Cluster(p, (*scopedFC)))<minDist2)
+                    {
+                        scopedFC->toggleMark();
+                        markedClusterList.push_back(scopedFC);
+
+                        pq.push(distanceEval_t(scopedFC, clusterDistance2));
+                        scopedFC->closestFaceInCluster(map, p, position, closestFace, minDist2);
+                    }
+                }
+    }
+    for(FaceCluster *fc : markedClusterList)
+    {
+        fc->toggleMark();
+    }
+    return closestFace;
+}
+
+FaceCluster* FaceClustersAggregation::getCluster(unsigned int i, unsigned int j, unsigned int k)
+{
+    if(i>=m_width || j>=m_height || k>=m_depth)
+        return NULL;
+    else
+    {
+        FaceCluster* fc=&m_clusters[i*m_height*m_depth+j*m_depth+k];
+        return fc;
+    }
+}
+
+FaceCluster* FaceClustersAggregation::getCluster(const PFP2::VEC3& p)
+{
+    PFP2::VEC3 bbDimensions=m_clusters[0].bbMax()-m_clusters[0].bbMin();
+    PFP2::VEC3 bbToP=p-m_clusters[0].bbMin();
+    unsigned int x=std::max(0, std::min((int)(bbToP[0]/bbDimensions[0]), (int)m_width-1));
+    unsigned int y=std::max(0, std::min((int)(bbToP[1]/bbDimensions[1]), (int)m_height-1));
+    unsigned int z=std::max(0, std::min((int)(bbToP[2]/bbDimensions[2]), (int)m_depth-1));
+
+    return getCluster(x,y,z);
+}
+
+//Surface Radiance Plugin
 
 bool Surface_Radiance_Plugin::enable()
 {
@@ -48,7 +275,7 @@ bool Surface_Radiance_Plugin::enable()
 
 	m_computeRadianceDistanceAction = new QAction("Compute Radiance Distance", this);
 	m_schnapps->addMenuAction(this, "Radiance;Compute Distance", m_computeRadianceDistanceAction);
-	connect(m_computeRadianceDistanceAction, SIGNAL(triggered()), this, SLOT(openComputeRadianceDistanceDialog()));
+    connect(m_computeRadianceDistanceAction, SIGNAL(triggered()), this, SLOT(openComputeRadianceDistanceDialog()));
 
 	connect(m_computeRadianceDistanceDialog, SIGNAL(accepted()), this, SLOT(computeRadianceDistanceFromDialog()));
 	connect(m_computeRadianceDistanceDialog->button_apply, SIGNAL(clicked()), this, SLOT(computeRadianceDistanceFromDialog()));
@@ -156,10 +383,6 @@ void Surface_Radiance_Plugin::schnappsClosing()
 {
 //	m_computeRadianceDistanceDialog->close();
 }
-
-
-
-
 
 void Surface_Radiance_Plugin::vboAdded(Utils::VBO *vbo)
 {
@@ -344,6 +567,10 @@ MapHandlerGen* Surface_Radiance_Plugin::importFromFile_SH(const QString& fileNam
 			MapParameters& mapParams = h_mapParameterSet[mhg];
 
 			mapParams.nbVertices = Algo::Topo::getNbOrbits<VERTEX>(*map);
+
+            //TER trick
+            mapParams.radianceResolution = Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>::get_resolution();
+            mapParams.radianceNb_coefs = Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>::get_nb_coefs();
 
 			mapParams.radiance = map->getAttribute<Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>, VERTEX, PFP2::MAP>("radiance") ;
 			mapParams.radianceTexture = new Utils::Texture<2, Geom::Vec3f>(GL_FLOAT);
@@ -619,6 +846,38 @@ void Surface_Radiance_Plugin::decimate(const QString& mapName, const QString& po
 	mh->notifyAttributeModification(position);
 }
 
+void Surface_Radiance_Plugin::applyTaubinFilter(const QString& mapName,
+    const QString& positionAttributeName,
+    int iterationsNumber
+)
+{   
+    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
+    if(mh == NULL)
+        return;
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> position = mh->getAttribute<PFP2::VEC3, VERTEX>(positionAttributeName);
+    if(!position.isValid())
+        return;
+
+
+    PFP2::MAP* map = mh->getMap();
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> position2=map->addAttribute<PFP2::VEC3, VERTEX, PFP2::MAP>("position2");
+
+    unsigned int nbVertices = Algo::Topo::getNbOrbits<VERTEX>(*map);
+    std::cout << "nb vert -> " << nbVertices << std::endl;
+
+    for(int i=0; i<iterationsNumber; ++i)
+    {
+        Algo::Surface::Filtering::filterTaubin<PFP2>(*map, position, position2);
+    }
+
+    map->removeAttribute<PFP2::VEC3, VERTEX, PFP2::MAP>(position2);
+
+    mh->notifyConnectivityModification();
+    mh->notifyAttributeModification(position);
+}
+
 void Surface_Radiance_Plugin::computeRadianceDistance(const QString& mapName1,
     const QString& positionAttributeName1,
     const QString& normalAttributeName1,
@@ -629,8 +888,11 @@ void Surface_Radiance_Plugin::computeRadianceDistance(const QString& mapName1,
     const QString& distanceAttributeName2,
     const QString& outFile)
 {
+    clock_t begin = clock();
+
     std::ofstream ofs;
-    ofs.open ("../../../../../Dropbox/St/radianceDistance.log", std::ostream::app);
+    if(!outFile.isEmpty())
+        ofs.open(outFile.toStdString(), std::ostream::app);
 
 	MapHandler<PFP2>* mh1 = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName1));
 	if(mh1 == NULL)
@@ -685,16 +947,26 @@ void Surface_Radiance_Plugin::computeRadianceDistance(const QString& mapName1,
 
 	map2->setExternalThreadsAuthorization(true);
 
+    Geom::BoundingBox<PFP2::VEC3> fusionBB(mh1->getBB().min());
+    fusionBB.addPoint(mh1->getBB().max());
+    fusionBB.fusion(mh2->getBB());
+    FaceClustersAggregation fca(fusionBB, 16, 6, 10);
+    fca.clusterizeMap((*map2),position2, normal2, PFP2::VEC3(0,1,0), -0.02);
+
     foreach_cell<VERTEX>(*map1, [&] (Vertex v)
     {
-		const PFP2::VEC3& P = position1[v];
-		PFP2::VEC3& N = normal1[v];
+        if(PFP2::VEC3(0,1,0)*normal1[v]>=-0.02) {
+        const PFP2::VEC3& P = position1[v];
+        PFP2::VEC3& N = normal1[v];
 
         // find closest point on map2 (naive)
 
-		PFP2::REAL minDist2 = std::numeric_limits<PFP2::REAL>::max();
-		Face closestFace;
+        Face closestFace;
 
+        //OLD VERSION
+
+        /*
+        PFP2::REAL minDist2=std::numeric_limits<PFP2::REAL>::max();
         for (Face f : allFacesOf(*map2))
         {
             PFP2::REAL dist = Algo::Geometry::squaredDistancePoint2Face<PFP2>(*map2, f, position2, P);
@@ -704,8 +976,15 @@ void Surface_Radiance_Plugin::computeRadianceDistance(const QString& mapName1,
                 closestFace = f;
             }
         }
+        */
 
-		double l1, l2, l3;
+        //NEW VERSION
+
+        closestFace=fca.findFace((*map2), P, position2);
+
+        //
+
+        double l1, l2, l3;
 		Algo::Geometry::closestPointInTriangle<PFP2>(*map2, closestFace, position2, P, l1, l2, l3);
 
 		// compute radiance error
@@ -736,13 +1015,14 @@ void Surface_Radiance_Plugin::computeRadianceDistance(const QString& mapName1,
 
         PFP2::REAL radError = integral / area;
 
-        distance1[v] = radError; //position error and normal error are feeling very lonely about this
+        distance1[v] = radError;
 
         // barycentric area=sum of 1/3 of each area involved with the vertice
         PFP2::REAL barycentricArea = Algo::Surface::Geometry::vertexBarycentricArea<PFP2>((*map1), v, position1);
 
         errors.push_back(std::pair<PFP2::REAL, PFP2::REAL>(radError, barycentricArea));
-	}
+        }
+    }
 	);
 
 	map2->setExternalThreadsAuthorization(false);
@@ -790,18 +1070,30 @@ void Surface_Radiance_Plugin::computeRadianceDistance(const QString& mapName1,
 
 	integrator.Release();
 
-    ofs << map1->getNbCells(VERTEX) << ',' << map2->getNbCells(VERTEX) << ',' << maxDistance << ',';
-    ofs << avgDistance << ',' << avgDistanceN2 << ',' << areaDistance << ',' << areaDistanceN2 << std::endl;
+    if(ofs.is_open())
+    {
+        ofs << map1->getNbCells(VERTEX) << ',' << map2->getNbCells(VERTEX) << ',' << maxDistance << ',';
+        ofs << avgDistance << ',' << avgDistanceN2 << ',' << areaDistance << ',' << areaDistanceN2 << ',';
+        ofs << mapParams1.radianceResolution << ',' << mapParams2.radianceResolution << std::endl;
+    }
+    else
+    {
+        CGoGNout << map1->getNbCells(VERTEX) << ',' << map2->getNbCells(VERTEX) << ',' << maxDistance << ',';
+        CGoGNout << avgDistance << ',' << avgDistanceN2 << ',' << areaDistance << ',' << areaDistanceN2 << ',';
+        CGoGNout << mapParams1.radianceResolution << ',' << mapParams2.radianceResolution << CGoGNendl;
+    }
 
-#ifdef IN_DEV
     ofs.close();
-#endif
 
     this->pythonRecording("computeRadianceDistance", "", mapName1, positionAttributeName1, normalAttributeName1, distanceAttributeName1,
                             mapName2, positionAttributeName2, normalAttributeName2, distanceAttributeName2);
 
     mh1->notifyAttributeModification(distance1);
     mh2->notifyAttributeModification(distance2);
+
+    clock_t end = clock();
+    double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
+    CGoGNout << "computeRadianceDistance CPU time: " << elapsed_secs << CGoGNendl;
 }
 
 bool Surface_Radiance_Plugin::quickRadianceValid(const Utils::SphericalHarmonics<PFP2::REAL, PFP2::VEC3>& radiance)
@@ -812,7 +1104,7 @@ bool Surface_Radiance_Plugin::quickRadianceValid(const Utils::SphericalHarmonics
     return true;
 }
 
-void Surface_Radiance_Plugin::quickFixRadiance(const QString& mapName, const QString& positionAttributeName)
+void Surface_Radiance_Plugin::fixNaNRadiance(const QString& mapName, const QString& positionAttributeName)
 {
     MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
     if(mh == NULL)
@@ -835,42 +1127,7 @@ void Surface_Radiance_Plugin::quickFixRadiance(const QString& mapName, const QSt
     });
 }
 
-void Surface_Radiance_Plugin::quickFixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString& normalAttributeName)
-{
-    //Checks only critical radiances, a.k.a radiances with null coefs
-    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
-    if(mh == NULL)
-        return;
-
-    PFP2::MAP* map = mh->getMap();
-    MapParameters& mapParams = h_mapParameterSet[mh];
-
-    VertexAttribute<PFP2::VEC3, PFP2::MAP> position = mh->getAttribute<PFP2::VEC3, VERTEX>(positionAttributeName);
-    if(!position.isValid())
-        return;
-
-    VertexAttribute<PFP2::VEC3, PFP2::MAP> normal = mh->getAttribute<PFP2::VEC3, VERTEX>(normalAttributeName);
-    if(!normal.isValid())
-        return;
-
-    foreach_cell<VERTEX>(*map, [&] (Vertex v)
-    {
-        if(mapParams.radiance[v].get_coef(0,0)[0]==0)
-        foreach_cell<VERTEX>(*map, [&] (Vertex v2)
-        {
-            if(position[v]==position[v2] && mapParams.radiance[v2.dart].get_coef(0,0)[0]!=0)
-            {
-                CGoGNerr << "Found vertices with same position at position "
-                         << position[v] << " and normals " << normal[v] << " and " << normal[v2]
-                         << " and radiance coefs " << mapParams.radiance[v.dart] << " and " << mapParams.radiance[v2.dart] << CGoGNendl;
-                mapParams.radiance[v.dart]=mapParams.radiance[v2.dart];
-            }
-        });
-    });
-
-}
-
-void Surface_Radiance_Plugin::slowFixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString& normalAttributeName)
+void Surface_Radiance_Plugin::fixDoubledVertices(const QString& mapName, const QString& positionAttributeName, const QString& normalAttributeName)
 {
     //Checks every radiances and tries to find a vertice at the same
     MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
@@ -898,10 +1155,6 @@ void Surface_Radiance_Plugin::slowFixDoubledVertices(const QString& mapName, con
         {
             if(position[v]==position[v2])
             {
-                assert(v!=v2);
-                CGoGNerr << "Found vertices with same position at position "
-                         << position[v] << " and normals " << normal[v] << " and " << normal[v2]
-                         << " and radiance coefs " << mapParams.radiance[v.dart] << " and " << mapParams.radiance[v2.dart] << CGoGNendl;
                 if(mapParams.radiance[v2.dart].get_coef(0,0)[0]!=0)
                     mapParams.radiance[v.dart]=mapParams.radiance[v2.dart];
                 else
@@ -911,7 +1164,65 @@ void Surface_Radiance_Plugin::slowFixDoubledVertices(const QString& mapName, con
         }
         checkedVertexVector.push_back(v);
     });
+    CGoGNerr << "done with checking errors." << CGoGNendl;
+}
 
+void Surface_Radiance_Plugin::fixSize(const QString& mapName, const QString& positionAttributeName, double scale)
+{
+    //Checks every radiances and tries to find a vertice at the same
+    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
+    if(mh == NULL)
+        return;
+
+    PFP2::MAP* map = mh->getMap();
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> position = mh->getAttribute<PFP2::VEC3, VERTEX>(positionAttributeName);
+    if(!position.isValid())
+        return;
+
+    foreach_cell<VERTEX>(*map, [&] (Vertex v)
+    {
+        position[v]*=scale;
+    });
+}
+
+void Surface_Radiance_Plugin::indiscriminate(const QString& mapName, const QString& positionAttributeName, const QString &normalAttributeName,
+                    PFP2::VEC3 N, PFP2::REAL threshold)
+{
+    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
+    if(mh == NULL)
+        return;
+
+    PFP2::MAP* map = mh->getMap();
+    MapParameters& mapParams = h_mapParameterSet[mh];
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> position = mh->getAttribute<PFP2::VEC3, VERTEX>(positionAttributeName);
+    if(!position.isValid())
+        return;
+
+    VertexAttribute<PFP2::VEC3, PFP2::MAP> normal = mh->getAttribute<PFP2::VEC3, VERTEX>(normalAttributeName);
+    if(!normal.isValid())
+        return;
+
+    Parallel::foreach_cell<VERTEX>(*map, [&] (Vertex v, unsigned int threadIndex)
+    {
+        if(N*normal[v]<threshold)
+        {
+            int l= mapParams.radianceResolution;
+            while(l>0)
+            {
+                for(int m=-l; m<=l; ++m)
+                {
+                    mapParams.radiance[v.dart].get_coef(l,m)=PFP2::VEC3(0,0,0);
+                }
+                --l;
+            }
+            mapParams.radiance[v.dart].get_coef(0,0)=PFP2::VEC3(2.0, 0, 2.0);
+        }
+    });
+
+    mh->notifyConnectivityModification();
+    mh->notifyAttributeModification(position);
 }
 
 void Surface_Radiance_Plugin::checkNbVerticesAndExport(Surface_Radiance_Plugin* p, const unsigned int* nbVertices)
@@ -941,8 +1252,9 @@ void Surface_Radiance_Plugin::exportPLY(
 	typedef PFP2::VEC3 VEC3;
 
 #ifdef IN_DEV
-    quickFixRadiance(mapName, positionAttributeName);
-    slowFixDoubledVertices(mapName, positionAttributeName, normalAttributeName);
+    //fixNaNRadiance(mapName, positionAttributeName);
+    //fixDoubledVertices(mapName, positionAttributeName, normalAttributeName);
+    //indiscriminate(mapName, positionAttributeName, normalAttributeName, PFP2::VEC3(0,1,0), -0.02);
 #endif
 
 	MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
@@ -957,7 +1269,9 @@ void Surface_Radiance_Plugin::exportPLY(
 	if(!normal.isValid())
 		return;
 
-	VertexAttribute<Utils::SphericalHarmonics<REAL, VEC3>, MAP> radiance = h_mapParameterSet[mh].radiance;
+    MapParameters& mapParams = h_mapParameterSet[mh];
+
+    VertexAttribute<Utils::SphericalHarmonics<REAL, VEC3>, MAP> radiance = mapParams.radiance;
 	if(!radiance.isValid())
 		return;
 
@@ -1039,7 +1353,7 @@ void Surface_Radiance_Plugin::exportPLY(
 	out << "property " << nameOfTypePly_REAL << " ny" << std::endl ;
 	out << "property " << nameOfTypePly_REAL << " nz" << std::endl ;
 
-	int res = Utils::SphericalHarmonics<REAL, VEC3>::get_resolution() ;
+    int res = mapParams.radianceResolution;
 	for (int l = 0 ; l <= res ; ++l)
 	{
 		for (int m = -l ; m <= l ; ++m)
@@ -1086,6 +1400,216 @@ void Surface_Radiance_Plugin::exportPLY(
 	this->pythonRecording("exportPLY", "", mapName, positionAttributeName, normalAttributeName, filename);
 }
 
+void Surface_Radiance_Plugin::exportPLY_superiorResolution(const QString& mapName,
+    const QString& positionAttributeName,
+    const QString& normalAttributeName,
+    const QString& filename,
+    int resolution)
+{
+#ifdef IN_DEV
+    //fixNaNRadiance(mapName, positionAttributeName);
+    //fixDoubledVertices(mapName, positionAttributeName, normalAttributeName);
+    //indiscriminate(mapName, positionAttributeName, normalAttributeName, PFP2::VEC3(0,1,0), -0.02);
+#endif
+
+    typedef PFP2::MAP MAP;
+    typedef PFP2::REAL REAL;
+    typedef PFP2::VEC3 VEC3;
+
+    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
+    if(mh == NULL)
+        return;
+
+    VertexAttribute<VEC3, MAP> position = mh->getAttribute<VEC3, VERTEX>(positionAttributeName);
+    if(!position.isValid())
+        return;
+
+    VertexAttribute<VEC3, MAP> normal = mh->getAttribute<VEC3, VERTEX>(normalAttributeName);
+    if(!normal.isValid())
+        return;
+
+    MapParameters& mapParams = h_mapParameterSet[mh];
+
+    if(resolution<=mapParams.radianceResolution)
+        return;
+
+    VertexAttribute<Utils::SphericalHarmonics<REAL, VEC3>, MAP> radiance = mapParams.radiance;
+    if(!radiance.isValid())
+        return;
+
+    // open file
+    std::ofstream out ;
+    out.open(filename.toStdString(), std::ios::out | std::ios::binary) ;
+
+    if (!out.good())
+    {
+        CGoGNerr << "Unable to open file " << CGoGNendl ;
+        return ;
+    }
+
+    MAP* map = mh->getMap();
+
+    unsigned int nbDarts = map->getNbDarts() ;
+    std::vector<unsigned int> facesSize ;
+    std::vector<std::vector<unsigned int> > facesIdx ;
+    facesSize.reserve(nbDarts/3) ;
+    facesIdx.reserve(nbDarts/3) ;
+    std::map<unsigned int, unsigned int> vIndex ;
+    unsigned int vCpt = 0 ;
+    std::vector<unsigned int> vertices ;
+    vertices.reserve(nbDarts/6) ;
+
+    // Go over all faces
+    CellMarker<MAP, VERTEX> markV(*map) ;
+    TraversorF<MAP> t(*map) ;
+    for(Dart d = t.begin(); d != t.end(); d = t.next())
+    {
+        std::vector<unsigned int> fidx ;
+        fidx.reserve(8) ;
+        unsigned int degree = 0 ;
+        Traversor2FV<MAP> tfv(*map, d) ;
+        for(Dart it = tfv.begin(); it != tfv.end(); it = tfv.next())
+        {
+            ++degree ;
+            unsigned int vNum = map->getEmbedding<VERTEX>(it) ;
+            if(!markV.isMarked(it))
+            {
+                markV.mark(it) ;
+                vIndex[vNum] = vCpt++ ;
+                vertices.push_back(vNum) ;
+            }
+            fidx.push_back(vIndex[vNum]) ;
+        }
+        facesSize.push_back(degree) ;
+        facesIdx.push_back(fidx) ;
+    }
+
+    // Start writing the file
+    out << "ply" << std::endl ;
+
+    // test endianness
+    union
+    {
+        uint32_t i ;
+        char c[4] ;
+    } bint = {0x01020304} ;
+    if (bint.c[0] == 1) // big endian
+        out << "format binary_big_endian 1.0" << std::endl ;
+    else
+        out << "format binary_little_endian 1.0" << std::endl ;
+
+    out << "comment File generated by the CGoGN library" << std::endl ;
+    out << "comment See : http://cgogn.unistra.fr/" << std::endl ;
+    out << "comment or contact : cgogn@unistra.fr" << std::endl ;
+    // Vertex elements
+    out << "element vertex " << vertices.size() << std::endl ;
+
+    std::string nameOfTypePly_REAL(nameOfTypePly(position[0][0])) ;
+
+    out << "property " << nameOfTypePly_REAL << " x" << std::endl ;
+    out << "property " << nameOfTypePly_REAL << " y" << std::endl ;
+    out << "property " << nameOfTypePly_REAL << " z" << std::endl ;
+
+
+    out << "property " << nameOfTypePly_REAL << " nx" << std::endl ;
+    out << "property " << nameOfTypePly_REAL << " ny" << std::endl ;
+    out << "property " << nameOfTypePly_REAL << " nz" << std::endl ;
+
+    int res = mapParams.radianceResolution;
+    for (int l = 0 ; l <= resolution ; ++l)
+    {
+        for (int m = -l ; m <= l ; ++m)
+        {
+            out << "property " << nameOfTypePly_REAL << " SHcoef_" << l << "_" << m << "_r" << std::endl ;
+            out << "property " << nameOfTypePly_REAL << " SHcoef_" << l << "_" << m << "_g" << std::endl ;
+            out << "property " << nameOfTypePly_REAL << " SHcoef_" << l << "_" << m << "_b" << std::endl ;
+        }
+    }
+
+    // Face element
+    out << "element face " << facesSize.size() << std::endl ;
+    out << "property list uint8 " << nameOfTypePly(facesIdx[0][0]) << " vertex_indices" << std::endl ;
+    out << "end_header" << std::endl ;
+
+    // binary vertices
+    for(unsigned int i = 0; i < vertices.size(); ++i)
+    {
+        const VEC3& p = position[vertices[i]] ;
+        out.write((char*)(&(p[0])), sizeof(p)) ;
+        const VEC3& n = normal[vertices[i]] ;
+        out.write((char*)(&(n[0])), sizeof(n)) ;
+
+        for (int l=0 ; l <= resolution ; ++l)
+        {
+            for (int m=-l ; m <= l ; ++m)
+            {
+                if(l>res)
+                {
+                    VEC3 r(0,0,0);
+                    out.write((char*)(&(r[0])), sizeof(r)) ;
+                }
+                else
+                {
+                    const VEC3& r = radiance[vertices[i]].get_coef(l,m) ;
+                    out.write((char*)(&(r[0])), sizeof(r)) ;
+                }
+            }
+        }
+    }
+
+    // binary faces
+    for(unsigned int i = 0; i < facesSize.size(); ++i)
+    {
+        uint8_t nbe = facesSize[i] ;
+        out.write((char*)(&nbe), sizeof(uint8_t)) ;
+        out.write((char*)(&(facesIdx[i][0])), facesSize[i] * sizeof(facesIdx[i][0])) ;
+    }
+
+    out.close() ;
+
+    this->pythonRecording("exportPLY", "", mapName, positionAttributeName, normalAttributeName, filename);
+}
+
+void Surface_Radiance_Plugin::fixSHMap(const QString& mapName,
+    const QString& positionAttributeName,
+    const QString& normalAttributeName, double scale
+)
+{
+    fixNaNRadiance(mapName, positionAttributeName);
+    fixDoubledVertices(mapName, positionAttributeName, normalAttributeName);
+    if(scale!=PFP2::REAL(1))
+    {
+        fixSize(mapName, positionAttributeName, scale);
+    }
+    this->pythonRecording("fixSHMap", "", mapName, positionAttributeName, normalAttributeName, scale);
+}
+
+void Surface_Radiance_Plugin::logRadianceDetails(const QString& mapName, const QString& filename)
+{
+    //Checks every radiances and tries to find a vertice at the same
+    MapHandler<PFP2>* mh = static_cast<MapHandler<PFP2>*>(m_schnapps->getMap(mapName));
+    if(mh == NULL)
+        return;
+
+    PFP2::MAP* map = mh->getMap();
+    MapParameters& mapParams = h_mapParameterSet[mh];
+
+    std::ofstream ofs;
+    ofs.open (filename.toStdString(), std::ostream::app);
+    assert(ofs.is_open() || !"Couldn't open file in logRadianceDetails");
+
+    ofs << "Map " << mapName.toStdString() << " of radiance level "
+        << mapParams.radianceResolution << std::endl;
+
+    foreach_cell<VERTEX>(*map, [&] (Vertex v)
+    {
+        ofs << mapParams.radiance[v.dart] << std::endl;
+    });
+
+    ofs.close();
+
+    this->pythonRecording("logRadianceDetails", "", mapName, filename);
+}
 
 #if CGOGN_QT_DESIRED_VERSION == 5
 	Q_PLUGIN_METADATA(IID "CGoGN.SCHNapps.Plugin")

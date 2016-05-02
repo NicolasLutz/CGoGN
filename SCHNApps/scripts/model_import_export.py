@@ -8,25 +8,27 @@
 view_0 = schnapps.getView("view_0");
 Surface_Radiance = schnapps.enablePlugin("Surface_Radiance");
 
+mesh = Surface_Radiance.importFromFile_SH("./stats/1-Mask-quantize_256_sh.ply");
+mesh.setBBVertexAttribute("position");
+mesh.createVBO("position");
+mesh.createVBO("normal");
+mesh.createVBO("radiance");
+Surface_Radiance.fixSHMap(mesh.getName(), "position", "normal");
+Surface_Radiance.exportPLY(mesh.getName(), "position", "normal", "./stats/1-Mask-quantize_256_sh.ply");
+
 #model
-Mask1_decim005_degree0_lambda001 = Surface_Radiance.importFromFile_SH("Mask1_decim005_degree0_lambda001.ply");
-Mask1_decim005_degree0_lambda001.setBBVertexAttribute("position");
-Mask1_decim005_degree0_lambda001.createVBO("position");
-Mask1_decim005_degree0_lambda001.createVBO("normal");
-Mask1_decim005_degree0_lambda001.createVBO("radiance");
-Surface_Radiance.exportPLY(Mask1_decim005_degree0_lambda001.getName(), "position", "normal", "Mask1_decim005_degree0_lambda001_fixed.ply");
+#Mask1_decim005_degree0_lambda001 = Surface_Radiance.importFromFile_SH("Mask1_decim005_degree0_lambda001.ply");
+#Mask1_decim005_degree0_lambda001.setBBVertexAttribute("position");
+#Mask1_decim005_degree0_lambda001.createVBO("position");
+#Mask1_decim005_degree0_lambda001.createVBO("normal");
+#Mask1_decim005_degree0_lambda001.createVBO("radiance");
+#Surface_Radiance.exportPLY_superiorResolution(Mask1_decim005_degree0_lambda001.getName(), "position", "normal", "Mask1_decim005_degree0_lambda001_fixed.ply", 2);
 
-Mask1_decim005_degree1_lambda001 = Surface_Radiance.importFromFile_SH("Mask1_decim005_degree1_lambda001.ply");
-Mask1_decim005_degree1_lambda001.setBBVertexAttribute("position");
-Mask1_decim005_degree1_lambda001.createVBO("position");
-Mask1_decim005_degree1_lambda001.createVBO("normal");
-Mask1_decim005_degree1_lambda001.createVBO("radiance");
-Surface_Radiance.exportPLY(Mask1_decim005_degree1_lambda001.getName(), "position", "normal", "Mask1_decim005_degree1_lambda001_fixed.ply");
-
-Mask1_decim005_degree2_lambda001 = Surface_Radiance.importFromFile_SH("Mask1_decim005_degree2_lambda001.ply");
-Mask1_decim005_degree2_lambda001.setBBVertexAttribute("position");
-Mask1_decim005_degree2_lambda001.createVBO("position");
-Mask1_decim005_degree2_lambda001.createVBO("normal");
-Mask1_decim005_degree2_lambda001.createVBO("radiance");
-Surface_Radiance.exportPLY(Mask1_decim005_degree2_lambda001.getName(), "position", "normal", "Mask1_decim005_degree2_lambda001_fixed.ply");
+#model
+#Mask1_decim005_degree2_lambda001 = Surface_Radiance.importFromFile_SH("Mask1_decim005_degree2_lambda001.ply");
+#Mask1_decim005_degree2_lambda001.setBBVertexAttribute("position");
+#Mask1_decim005_degree2_lambda001.createVBO("position");
+#Mask1_decim005_degree2_lambda001.createVBO("normal");
+#Mask1_decim005_degree2_lambda001.createVBO("radiance");
+#Surface_Radiance.exportPLY(Mask1_decim005_degree2_lambda001.getName(), "position", "normal", "Mask1_decim005_degree2_lambda001_fixed.ply");
 

@@ -36,6 +36,7 @@ private slots:
 	void binormalVBOChanged(int index);
 	void fragmentInterpolationChanged(int state);
 	void decimateClicked();
+    void applyTaubinFilterClicked();
 
 private:
 	void addPositionVBO(QString name);
